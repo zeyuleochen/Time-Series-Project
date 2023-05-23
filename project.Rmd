@@ -1,0 +1,540 @@
+---
+title: "Project"
+author: "Zeyu Chen"
+date: "2023-05-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+suppressPackageStartupMessages(library("anytime"))
+suppressPackageStartupMessages(library("lubridate"))
+suppressPackageStartupMessages(library("bsts"))
+suppressPackageStartupMessages(library("car"))
+suppressPackageStartupMessages(library("caret"))
+suppressPackageStartupMessages(library("forecast"))
+suppressPackageStartupMessages(library("tseries"))
+suppressPackageStartupMessages(library("ggplot2"))
+suppressPackageStartupMessages(library("TSA"))
+suppressPackageStartupMessages(library("tseries"))
+library(knitr)
+library(kableExtra)
+```
+
+##### Before 2018 training and test
+```{r}
+#importing data
+train <- read.csv("train.csv")
+test <- read.csv("test.csv")
+#head(train)
+testdata <- test[,2]
+#Converting data for analysis
+train$Date <- as.Date(anytime(train$Date))
+test$Date <- as.Date(anytime(test$Date))
+train$Volume <- gsub(",", "", train$Volume)
+train$Market.Cap <- gsub(",", "", train$Market.Cap)
+train$Market.Cap <- as.numeric(train$Market.Cap)
+train$Volume <- as.numeric(train$Volume)
+
+# Check for missing or NA values in train dataframe
+any(is.na(train))
+sum(is.na(train))
+
+# Check for missing or NA values in test dataframe
+any(is.na(test))
+sum(is.na(test))
+
+```
+##### Before June 2021 training and test
+```{r}
+bitcoin_df <- read.csv("coin_Bitcoin.csv")
+bitcoin <- head(bitcoin_df, n = nrow(bitcoin_df) - 10)[,4:10]
+bit.test <- tail(bitcoin_df, n = 10)[,4:10]
+#day(bitcoin$Date) <- day(as.Date(anytime(bitcoin$Date))) - 1
+bitcoin$Date<- anytime(bitcoin$Date)
+bit.test$Date <- anytime(bit.test$Date)
+
+any(is.na(bitcoin_df))
+sum(is.na(bitcoin_df))
+```
+
+##### Data Properties
+```{r}
+bit.close <- ts(bitcoin$Close, frequency = 365.25,start = c(2013,4,29))
+plot(bit.close)
+
+adf.test(bit.close)
+kpss.test(bit.close)
+kpss.test(bit.close, null = "Trend")
+
+# Store the results of the ADF test and KPSS test in separate variables
+adf_result <- c(Dickey_Fuller = -1.6737, Lag_order = 14, p_value = 0.7165)
+kpss_result <- c(KPSS_Level = 13.363, Truncation_lag = 9, p_value = 0.01)
+
+# Combine the results into a data frame
+results_df <- data.frame(Test = c("ADF Test", "KPSS Test"),
+                         Dickey_Fuller = c(adf_result[1], NA),
+                         Lag_order = c(adf_result[2], NA),
+                         KPSS_Level = c(NA, kpss_result[1]),
+                         Truncation_lag = c(NA, kpss_result[2]),
+                         p_value = c(adf_result[3], kpss_result[3])
+                         )
+
+# Render the table
+kable(results_df, align = "c") %>%
+  kable_styling()
+
+# Assuming your time series data is stored in 'bit.close'
+acf_result <- acf(bit.close, lag.max = 50, main = "Autocorrelation of Bitcoin Prices")
+pacf_result <- pacf(bit.close, main = "Partial Autocorrelation of Bitcoin Prices")
+
+```
+
+```{r}
+ggplot(data = bit.close, aes(x = bit.close)) +
+  geom_histogram(aes(y = ..density..), fill = "lightblue", color = "black", bins = 30) +
+  geom_density(color = "red", size = 1) +
+  labs(x = "Bitcoin Prices", y = "Density", title = "Histogram of Bitcoin Close Prices") +
+  theme_minimal()
+```
+
+
+##### EDA on data before June 2021
+```{r}
+ggplot(bitcoin, aes(x = Date, y = Close)) +
+  geom_line() +
+  labs(x = "Date", y = "Closing Price") +
+  ggtitle("Closing Prices Over Time")
+
+ggplot(bitcoin, aes(x = Date, y = Close)) +
+  geom_line() +
+  geom_smooth(aes(group= -1), method ='gam', formula =y ~ s(x)) +
+  labs(x = "Date", y = "Closing Price") +
+  ggtitle("Closing Prices Over Time")
+
+ggplot(bitcoin, aes(x = Date, y = Volume)) +
+  geom_line() +
+  #geom_smooth(aes(group= -1), method ='gam', formula =y ~ s(x)) +
+  labs(x = "Date", y = "Trade Volume") +
+  ggtitle("Trade Volume Over Time")
+
+ggplot() +
+  geom_line(data = bitcoin, aes(x = Date, y = Close, color = "Closing Price")) +
+  geom_line(data = bitcoin, aes(x = Date, y = Volume/1e7, color = "Trade Volume/10M")) +
+  #scale_y_continuous(sec.axis = sec_axis(~.*1e7, name = "Trade Volume/10M")) +
+  labs(x = "Date", y = "Closing Price", color = "Variable") +
+  ggtitle("Closing Prices and Trade Volume Over Time") +
+  scale_color_manual(values = c("Closing Price" = "blue", "Trade Volume/10M" = "red"))
+
+
+ggplot(bitcoin, aes(x = Date, y = Marketcap)) +
+  geom_line() +
+  #geom_smooth(aes(group= -1), method ='gam', formula =y ~ s(x)) +
+  labs(x = "Date", y = "Market Cap") +
+  ggtitle("Market Cap Over Time")
+```
+
+##### EDA on data before 2018
+```{r}
+ggplot(train, aes(x = Date, y = Close)) +
+  geom_line() +
+  labs(x = "Date", y = "Closing Price") +
+  ggtitle("Closing Prices Over Time")
+
+ggplot(train, aes(x = Date, y = Close)) +
+  geom_line() +
+  geom_smooth(aes(group= -1), method ='gam', formula =y ~ s(x)) +
+  labs(x = "Date", y = "Closing Price") +
+  ggtitle("Closing Prices Over Time")
+
+ggplot(train, aes(x = Date, y = Volume)) +
+  geom_line() +
+  #geom_smooth(aes(group= -1), method ='gam', formula =y ~ s(x)) +
+  labs(x = "Date", y = "Trade Volume") +
+  ggtitle("Trade Volume Over Time")
+
+ggplot() +
+  geom_line(data = train, aes(x = Date, y = Close, color = "Closing Price")) +
+  geom_line(data = train, aes(x = Date, y = Volume/1e6, color = "Trade Volume (Ten Thousands)")) +
+  scale_y_continuous(sec.axis = sec_axis(~.*1e6, name = "Trade Volume (Ten Thousands)")) +
+  labs(x = "Date", y = "Closing Price", color = "Variable") +
+  ggtitle("Closing Prices and Trade Volume Over Time") +
+  scale_color_manual(values = c("Closing Price" = "blue", "Trade Volume (Ten Thousands)" = "red"))
+
+
+ggplot(train, aes(x = Date, y = Market.Cap)) +
+  geom_line() +
+  #geom_smooth(aes(group= -1), method ='gam', formula =y ~ s(x)) +
+  labs(x = "Date", y = "Market Cap") +
+  ggtitle("Market Cap Over Time")
+```
+
+
+
+```{r}
+# check for relationship between volume and close price
+
+ggplot(data = bitcoin,aes(x=Volume,y=Close)) +
+    geom_point() +
+    geom_smooth(aes(group= -1), method ='gam', formula =y ~ s(x) ) +
+    labs(title="Price vs Volume", y="Price in USD", x="Volume traded per Day")
+
+ggplot(data = bitcoin,aes(x=Volume,y=Close)) +
+    geom_point() +
+    geom_smooth(aes(group= -1), method ='lm') +
+    labs(title="Price vs Volume", y="Price in USD", x="Volume traded per Day")
+    #facet_wrap(~ Name)
+
+```
+
+```{r}
+correlation_matrix<- cor(bitcoin[,2:7])
+as.data.frame(correlation_matrix)
+```
+
+
+
+```{r}
+# choose to forecast the close price of bitcoin
+# check
+
+bit.close <- ts(bitcoin$Close, frequency = 365.25,start = c(2013,4,29))
+plot(bit.close)
+
+adf.test(bit.close)
+
+#checking for trends and seasonality
+dects <- decompose(bit.close) #Obtaining the trends and seasonality
+plot(dects)
+
+# Perform STL decomposition
+decomp <- stl(bit.close, s.window = "periodic")
+
+# Plot the components
+plot(decomp)
+```
+```{r}
+# transformation by differencing twice
+after_differencing <- diff(diff(bit.close, differences = 1), differences = 1)
+
+par(mfrow = c(1, 2))
+plot(bit.close, type = "l", main = "Original Time Series")
+plot(after_differencing, type = "l", main = "Second-Order Differenced")
+
+```
+
+
+```{r}
+remainder <- decomp$time.series[, "remainder"]
+plot(remainder)
+Box.test(remainder, lag=20, type="Ljung-Box")
+auto.arima(remainder)
+pacf(remainder)
+```
+
+
+```{r}
+# take a look at the data before 2018
+bit.2017 <- window(bit.close, end = 2017)
+plot(bit.2017)
+decomp2017 <- stl(bit.2017, s.window = "periodic")
+
+# Plot the components
+plot(decomp2017)
+
+remainder2017 <- decomp2017$time.series[, "remainder"]
+plot(remainder2017)
+Box.test(remainder2017, lag=20, type="Ljung-Box")
+pacf(remainder2017)
+auto.arima(remainder2017)
+```
+```{r}
+# take a look at the data after between 2019 and 2022
+bit.2 <- window(bit.close, start = 2019)
+plot(bit.2)
+decomp2 <- stl(bit.2, s.window = "periodic")
+
+# Plot the components
+plot(decomp2)
+
+remainder2 <- decomp2$time.series[, "remainder"]
+plot(remainder2)
+Box.test(remainder2, lag=2, type="Ljung-Box")
+pacf(remainder2)
+auto.arima(remainder2)
+```
+
+```{r}
+# lag = 2 since there are both trend and seasonality
+tsdf <- diff(bitcoin$Close, lag = 2)
+tsdf <- tsdf[!is.na(tsdf)]
+adf.test(tsdf)
+plot(tsdf)
+#ACF AND PACF plots
+acf(tsdf)
+pacf(tsdf)
+```
+
+```{r}
+arima.fit <- auto.arima(bit.close)
+forecast.arima <- forecast(arima.fit, h=10)
+
+plot(forecast.arima)
+
+gegef <- as.data.frame(forecast(arima.fit, h=10))
+gegefct <- cbind(bit.test, gegef[,1])
+
+ggplot() + 
+  geom_line(data = gegefct, aes(Date, gegefct[,2]), color = "blue") + 
+  geom_line(data = gegefct, aes(Date, gegefct[,3]), color = "red") +
+  labs(title="Actual vs. Prediction", y="Price in USD", x="Date") 
+
+accuracy(gegef[,1], bit.test$Close)
+```
+
+```{r}
+arima.fit2 <- arima(bit.close, order = c(1,2,3))
+f2 <- as.data.frame(predict(arima.fit2, 10))
+accuracy(f2$pred, bit.test$Close)
+f2.df <- cbind(bit.test, f2[,1])
+
+ggplot() + 
+  geom_line(data = f2.df, aes(Date, f2[,1], color = "Prediction")) + 
+  geom_line(data = f2.df, aes(Date, f2.df[,5], color = "Actual")) +
+  labs(title="Actual vs. Prediction", y="Price in USD", x="Date", color = "Legend Title")
+
+```
+
+
+```{r}
+# Set the maximum values for p and q
+max_p <- 5
+max_q <- 5
+
+# Set the maximum sum of p and q
+max_pq_sum <- 6
+
+# Initialize variables for storing the best model and its AIC value
+best_model <- NULL
+best_aic <- Inf
+
+# Loop through all possible combinations of p and q
+for (p in 0:max_p) {
+  for (q in 0:max_q) {
+    if (p + q <= max_pq_sum) {
+      # Fit the ARIMA model
+      model <- arima(bit.close, order = c(p, 2, q))
+      
+      # Calculate the AIC value
+      aic <- AIC(model)
+      
+      # Update the best model and its AIC value if necessary
+      if (aic < best_aic) {
+        best_model <- model
+        best_aic <- aic
+      }
+    }
+  }
+}
+
+# Print the best model and its AIC value
+cat("Best ARIMA model: ARIMA(", best_model$arma[1], ", 2, ", best_model$arma[2], ")\n")
+cat("AIC: ", best_aic, "\n")
+
+```
+
+```{r}
+# only investigate the data within a year to make prediction
+bit.2020.ts <- tail(bit.close, 365)
+plot(bit.2020.ts)
+
+tsdf1 <- diff(bit.2020.ts, lag = 2)
+tsdf1 <- tsdf1[!is.na(tsdf1)]
+adf.test(tsdf1)
+plot(tsdf1)
+#ACF AND PACF plots
+acf(tsdf1)
+pacf(tsdf1)
+```
+
+```{r}
+# Set the maximum values for p and q
+max_p <- 5
+max_q <- 5
+
+# Set the maximum sum of p and q
+max_pq_sum <- 6
+
+# Initialize variables for storing the best model and its AIC value
+best_model <- NULL
+best_aic <- Inf
+
+# Loop through all possible combinations of p and q
+for (p in 0:max_p) {
+  for (q in 0:max_q) {
+    if (p + q <= max_pq_sum) {
+      # Fit the ARIMA model
+      model <- arima(bit.2020.ts, order = c(p, 2, q))
+      
+      # Calculate the AIC value
+      aic <- AIC(model)
+      
+      # Update the best model and its AIC value if necessary
+      if (aic < best_aic) {
+        best_model <- model
+        best_aic <- aic
+      }
+    }
+  }
+}
+
+# Print the best model and its AIC value
+cat("Best ARIMA model: ARIMA(", best_model$arma[1], ", 2, ", best_model$arma[2], ")\n")
+cat("AIC: ", best_aic, "\n")
+```
+
+```{r}
+arima.fit2020 <- arima(bit.2020.ts, order = c(2,2,3))
+f2020 <- as.data.frame(predict(arima.fit2020, 7))
+accuracy(f2020$pred, bit.test$Close)
+f2020.df <- cbind(bit.test, f2020$pred)
+
+ggplot() + 
+  geom_line(data = f2020.df, aes(Date, f2020[,1], color = "Prediction")) + 
+  geom_line(data = f2020.df, aes(Date, f2020.df[,5], color = "Actual")) +
+  labs(title="Actual vs. Prediction", y="Price in USD", x="Date", color = "Legend Title")
+```
+
+```{r}
+# bsts model on whole data
+ss <- AddSemilocalLinearTrend(list(), bitcoin$Close) #Adding linear trend to model
+ss <- AddSeasonal(ss, bitcoin[,5], nseasons = 8, season.duration = 365) #Adding seasonal trend to model
+model1 <- bsts(bitcoin[,5],
+               state.specification = ss,
+               niter = 2000)
+
+plot(model1, main = 'BSTS Model with no Lags') #Plot based on bayesian regression of the model
+pred1 <- predict(model1, horizon = 10)
+plot(pred1, plot.original = 25)
+pred1$mean
+accuracy(pred1$mean, bit.test$Close)
+```
+
+```{r}
+par(mfrow = c(2,2))
+plot(model1, main = 'BSTS Model with no Lags')
+plot(model30, main = 'BSTS Model Lagged by 30 days')
+plot(model2, main = 'BSTS Model with Other Price Predictor')
+```
+```{r}
+par(mfrow = c(2,2))
+plot(pred1, plot.original = 25, main = 'BSTS Model with no Lags')
+plot(pred30, plot.original = 25, main = 'BSTS Model Lagged by 30 days')
+plot(pred2, plot.original = 25, main = 'BSTS Model with Other Price Predictor')
+```
+
+
+```{r}
+model2 <- bsts(Close ~ ., state.specification = ss,
+               niter = 2000,
+               data = as.data.frame(bitcoin[,2:7]))
+model3 <- bsts(Close ~ ., state.specification = ss,
+               niter = 2000,
+               data = as.data.frame(bitcoin[,2:7]),
+               expected.model.size = 30)
+
+par(mar = c(10, 4, 4, 2))
+CompareBstsModels(list("Model 1" = model1, "Model 2" = model2, "Model 3" = model3, "Model 4" = model30), colors = c("blue", "red", "green","yellow"))
+
+png("bsts_comparison.png", width = 800, height = 600)  # Set the width and height of the plot
+CompareBstsModels(list("Model 1" = model1, "Model 2" = model2, "Model 3" = model30),
+                  colors = c("blue", "red", "green"))
+
+```
+
+
+```{r}
+bitcoin_df$lag <- dplyr::lag(bitcoin_df$Close, n = 30, default = 0)
+bt <- head(bitcoin_df, n = nrow(bitcoin_df) - 10)[,4:11]
+btest <- tail(bitcoin_df, n = 10)[,4:11]
+
+model30 <- bsts(Close ~ lag,
+               state.specification = ss,
+               niter = 2000,
+               data = bt)
+
+plot(model30, main = 'BSTS Model Lagged by 30 days') #Plot based on bayesian regression of the model
+plot(model30, 'components')
+#plot(model30,'seasonal')
+
+
+pred30 <- predict(model30, horizon = 10, newdata = btest)
+plot(pred30, plot.original = 25)
+pred30$mean
+accuracy(pred30$mean, btest$Close)
+```
+
+
+```{r}
+pred2 <- predict(model2, horizon = 10, bit.test)
+plot(pred2, plot.original = 25)
+pred2$mean
+accuracy(pred2$mean, bit.test$Close)
+plot(pred3, plot.original = 50)
+pred3$mean
+accuracy(pred3$mean, bit.test$Close)
+```
+
+```{r}
+# Create a data frame with the evaluation metrics
+metrics <- data.frame(
+  Model = c("Lagged Model", "No Lagged Model", "Model with Other Price"),
+  ME = c(2640.151, 2562.328, 3417.034),
+  RMSE = c(2726.827, 2653.427, 3481.587),
+  MAE = c(2640.151, 2562.328, 3417.034),
+  MPE = c(7.60796, 7.382076, 9.880903),
+  MAPE = c(7.60796, 7.382076, 9.880903)
+)
+
+# Format the table using kable() and kable_styling()
+table <- kable(metrics, format = "html", caption = "Evaluation Metrics") %>%
+  kable_styling(bootstrap_options = "striped")
+
+# Print the table
+print(table)
+
+```
+
+
+```{r}
+# Load the required library
+library(prophet)
+
+# Prepare the data
+#bitcoin <- read.csv("bitcoin.csv")  # Replace with the path to your Bitcoin data file
+b <- bitcoin[, c("Date", "Close")]
+names(b) <- c("ds", "y")
+b$ds <- as.Date(b$ds)
+
+# Create and fit the Prophet model
+model_p <- prophet(b)
+forecast_p <- predict(model_p)
+
+# Generate future dates for forecasting
+future <- make_future_dataframe(model_p, periods = 10)  # Forecasting for 10 days ahead
+
+# Perform the forecast
+forecast_p <- predict(model_p, future)
+
+# Plot the forecast
+plot(model_p, forecast_p)
+
+# Access the forecasted values
+forecast_p$yhat  # Forecasted Bitcoin prices
+forecast_p$yhat_lower  # Lower bound of the forecasted prices
+forecast_p$yhat_upper  # Upper bound of the forecasted prices
+```
+
